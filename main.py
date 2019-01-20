@@ -1,10 +1,16 @@
 import numpy as np
+import os
 from os import listdir
-from os.path import join, isfile
+from os.path import join, isdir
 import tensorflow as tf
-from tensorflow.keras.utils import to_categorical
+import datetime
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
+from contextlib import redirect_stdout
+
+
+# tf.enable_eager_execution()
 
 
 def get_files_labels(data_directory, list_class_names):
@@ -36,54 +42,103 @@ def _get_read_func(target_height, target_width):
         image_string = tf.read_file(filepath)
         image_decoded_bw = tf.image.decode_and_crop_jpeg(image_string, [160, 580, 880, 820], channels=1)
         image_resized = tf.image.resize_images(image_decoded_bw, [target_height, target_width])
+        image_stand = tf.image.per_image_standardization(image_resized)
 
         # plt.imshow(np.squeeze(image_resized.numpy()), cmap='gray')
 
-        return image_resized, label
+        return image_stand, label
 
     return _image_read
 
 
-def sequential_conv_model(input_shape, n_outputs):
+def _get_read_func_augment(target_height, target_width):
+
+    def _image_read_augment(filepath, label):
+        image_string = tf.read_file(filepath)
+        image_decoded_bw = tf.image.decode_and_crop_jpeg(image_string, [160, 580, 880, 820], channels=1)
+        image_resized = tf.image.resize_images(image_decoded_bw, [target_height, target_width])
+        image_stand = tf.image.per_image_standardization(image_resized)
+
+        image_flip_l_r = tf.image.random_flip_left_right(image_stand)
+        image_flip_u_d = tf.image.random_flip_up_down(image_flip_l_r)
+
+        int_pick = tf.random_uniform((), minval=0, maxval=4, dtype=tf.int32)
+        image_rot = tf.image.rot90(image_flip_u_d, k=int_pick)
+
+        return image_rot, label
+
+    return _image_read_augment
+
+
+def sequential_conv_model(input_shape, n_outputs, lr):
     model = tf.keras.Sequential()
     lay = tf.keras.layers
 
-    model.add(lay.InputLayer(input_shape=input_shape))
     model.add(lay.Conv2D(
         filters=10,
         kernel_size=3,
-        strides=2,
+        strides=1,
         padding='same',
-        activation='relu'
+        activation='relu',
+        input_shape=input_shape,
     ))
     model.add(lay.MaxPool2D(pool_size=(2, 2)))
+    model.add(lay.BatchNormalization())
     model.add(lay.Conv2D(
         filters=20,
         kernel_size=3,
         strides=2,
         padding='same',
-        activation='relu'
+        activation='relu',
     ))
     model.add(lay.MaxPool2D(pool_size=(2, 2)))
+    model.add(lay.BatchNormalization())
     model.add(lay.Conv2D(
-        filters=20,
+        filters=30,
         kernel_size=3,
         strides=2,
         padding='same',
-        activation='relu'
+        activation='relu',
     ))
     model.add(lay.MaxPool2D(pool_size=(2, 2)))
+    model.add(lay.BatchNormalization())
     model.add(lay.Flatten())
+    model.add(lay.Dropout(0.20))
     model.add(lay.Dense(units=30, activation='relu'))
-    model.add(lay.Dense(units=n_outputs, activation='softmax'))
+    model.add(lay.Dense(units=n_outputs, activation='sigmoid'))
 
     model.compile(
-        optimizer=tf.train.AdamOptimizer(LEARNING_RATE),
-        loss='binary_crossentropy',
+        optimizer=tf.keras.optimizers.Adam(lr),
+        loss=tf.keras.losses.binary_crossentropy,
         metrics=['accuracy']
     )
 
     return model
+
+
+def plot_history(save_dir, history_dict, save=True):
+
+    acc_keys = [key for key in history_dict.keys() if 'acc' in key]
+    for key in acc_keys:
+        plt.plot(history_dict[key])
+    plt.title('model accuracy')
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.legend(acc_keys, loc='upper left')
+    if save:
+        plt.savefig(join(save_dir, 'accuracy_history.pdf'), bbox_inches='tight')
+    plt.close()
+
+    loss_keys = [key for key in history_dict.keys() if 'loss' in key]
+    for key in loss_keys:
+        plt.plot(history_dict[key])
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(loss_keys, loc='upper left')
+    if save:
+        plt.savefig(join(save_dir, 'loss_history.pdf'), bbox_inches='tight')
+    plt.close()
 
 
 if __name__ == '__main__':
@@ -97,8 +152,8 @@ if __name__ == '__main__':
 
     # Training variables
     BATCH_SIZE = 32
-    EPOCHS = 100
-    LEARNING_RATE = 0.01
+    EPOCHS = 200
+    LEARNING_RATE = 0.001
     IMG_HEIGHT = 200
     IMG_WIDTH = 200
 
@@ -107,7 +162,7 @@ if __name__ == '__main__':
     files, labels = np.array(files), np.array(labels)
 
     # Convert labels to integers
-    labels = np.array([classes_ints[class_name] for class_name in labels]).reshape((-1, 1))
+    labels = np.array([classes_ints[class_name] for class_name in labels]).reshape((-1, 1)).astype(np.float32)
 
     # Split data into train and test
     files_train, files_test, labels_train, labels_test = train_test_split(
@@ -129,69 +184,68 @@ if __name__ == '__main__':
         random_state=1
     )
 
-    # # Convert labels to one hot encoding
-    # labels_train = to_categorical(labels_train)
-    # labels_val = to_categorical(labels_val)
-    # labels_test = to_categorical(labels_test)
-
-    # Create placeholders for the dataset inputs for less memory usage during a session.
-    files_train_placeholder = tf.placeholder(files.dtype, files_train.shape)
-    labels_train_placeholder = tf.placeholder(labels.dtype, labels_train.shape)
-
-    files_val_placeholder = tf.placeholder(files.dtype, files_val.shape)
-    labels_val_placeholder = tf.placeholder(labels.dtype, labels_val.shape)
-
-    files_test_placeholder = tf.placeholder(files.dtype, files_test.shape)
-    labels_test_placeholder = tf.placeholder(labels.dtype, labels_test.shape)
-
     # Create datasets with batch iteration and infinite looping (epochs specified in model.fit method).
-    train_data = tf.data.Dataset.from_tensor_slices((files_train_placeholder, labels_train_placeholder))
-    train_data = train_data.map(_get_read_func(IMG_HEIGHT, IMG_WIDTH)).batch(BATCH_SIZE).repeat()
+    train_data = tf.data.Dataset.from_tensor_slices((files_train, labels_train))
+    train_data = train_data.map(_get_read_func_augment(IMG_HEIGHT, IMG_WIDTH)).batch(BATCH_SIZE).repeat()
 
-    val_data = tf.data.Dataset.from_tensor_slices((files_val_placeholder, labels_val_placeholder))
+    val_data = tf.data.Dataset.from_tensor_slices((files_val, labels_val))
     val_data = val_data.map(_get_read_func(IMG_HEIGHT, IMG_WIDTH)).batch(BATCH_SIZE).repeat()
 
-    test_data = tf.data.Dataset.from_tensor_slices((files_test_placeholder, labels_test_placeholder))
+    test_data = tf.data.Dataset.from_tensor_slices((files_test, labels_test))
     test_data = test_data.map(_get_read_func(IMG_HEIGHT, IMG_WIDTH)).batch(BATCH_SIZE).repeat()
 
-    # Create iterators for every dataset (necessary for datasets with placeholders)
-    train_iterator = train_data.make_initializable_iterator()
-    val_iterator = val_data.make_initializable_iterator()
-    test_iterator = test_data.make_initializable_iterator()
+    model = sequential_conv_model(
+        input_shape=(IMG_HEIGHT, IMG_WIDTH, 1),
+        n_outputs=1,
+        lr=LEARNING_RATE
+    )
 
-    with tf.Session() as sess:
-        tf.keras.backend.set_session(sess)
+    # Generate unique model name and directory
+    now = datetime.datetime.today()
+    now_string = '{}-{}-{}_{}-{}-{}'.format(now.year, now.month, now.day, now.hour, now.minute, now.second)
+    model_name = '_'.join(['nailgun', now_string])
+    base_dir = 'trained_models'
+    model_dir = join(base_dir, model_name)
+    if not isdir(model_dir):
+        os.makedirs(model_dir)
 
-        # Initialize train and validation iterators.
-        sess.run(train_iterator.initializer, feed_dict={files_train_placeholder: files_train,
-                                                        labels_train_placeholder: labels_train})
-        sess.run(val_iterator.initializer, feed_dict={files_val_placeholder: files_val,
-                                                      labels_val_placeholder: labels_val})
+    # Print and save model_summary
+    model.summary()
+    with open(join(model_dir, '{}_summary.txt'.format(model_name)), 'w') as f:
+        with redirect_stdout(f):
+            model.summary()
 
-        file_instance, label_instance = sess.run(train_iterator.get_next())
+    callbacks = [
+        tf.keras.callbacks.CSVLogger(join(model_dir, '{}.csv'.format(model_name))),
+        tf.keras.callbacks.ReduceLROnPlateau(patience=10, factor=0.5, verbose=1),
+        tf.keras.callbacks.EarlyStopping(patience=25),
+        tf.keras.callbacks.TensorBoard(join(model_dir, 'tensorboard_logs')),
+        tf.keras.callbacks.ModelCheckpoint(join(model_dir, 'checkpoint_{epoch:02d}.h5'), save_best_only=True)
+    ]
 
-        plt.imshow(np.squeeze(file_instance[2]), cmap='gray')
+    history = model.fit(
+        train_data,
+        epochs=EPOCHS,
+        steps_per_epoch=len(files_train) // BATCH_SIZE,
+        validation_data=val_data,
+        validation_steps=len(files_val) // BATCH_SIZE,
+        callbacks=callbacks
+    )
 
-        model = sequential_conv_model(
-            input_shape=(IMG_HEIGHT, IMG_WIDTH, 1),
-            n_outputs=1
-        )
+    plot_history(model_dir, history.history)
 
-        model.summary()
+    model.save(join(model_dir, '{}_model.h5'.format(model_name)))
 
-        model.fit(
-            train_iterator,
-            epochs=EPOCHS,
-            steps_per_epoch=len(files_train) // BATCH_SIZE,
-            validation_data=val_iterator,
-            validation_steps=len(files_val) // BATCH_SIZE
-        )
+    # Generate and save predictions
+    predictions_proba = model.predict(val_data, steps=len(files_val) // BATCH_SIZE)
+    predictions = (predictions_proba > 0.5).astype(np.float)
+    np.savetxt(join(model_dir, '{}_predictions_proba.txt'.format(model_name)), predictions_proba)
+    np.savetxt(join(model_dir, '{}_predictions.txt'.format(model_name)), predictions)
 
-        #todo Weitere Metriken und confusion matrix einführen
-        #todo Dokumentation von Metriken und loss (numerisch und visualisiert)
-        #todo Regularisierung (early stopping, Batch normalization, Dropout)
-        #todo Modell speichern
-        #todo Testing Skript (model.evaluate(Dataset) und model.predict)
+    # Calculate confusion matrix
+    cm = confusion_matrix(labels_val, predictions)
+    print(cm)
+    np.savetxt(join(model_dir, '{}_confusion_matrix.txt'.format(model_name)), cm)
 
-        #todo cross validation?
+    # tensorboard --logdir=/Users/Adem/PycharmProjects/Coding-Challenge/trained_models/nailgun_2019-1-20_14-0-1/tensorboard_logs --host localhost --port 8088
 
