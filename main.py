@@ -13,6 +13,7 @@ from contextlib import redirect_stdout
 
 
 def get_lr_schedule(initial_lr, decay):
+    """Returning a learning rate function for a tf.keras.callback.LearningRateScheduler"""
     def lr_decay(epoch):
         lrate = initial_lr * 1 / (1 + decay * epoch)
         return lrate
@@ -20,6 +21,7 @@ def get_lr_schedule(initial_lr, decay):
 
 
 class LRTensorBoard(tf.keras.callbacks.TensorBoard):
+    """Tensorboard callback customisation to track learning rate."""
     def __init__(self, log_dir):  # add other arguments to __init__ if you need
         super().__init__(log_dir=log_dir)
 
@@ -52,6 +54,7 @@ def get_files_labels(data_directory, list_class_names):
 
 
 def _get_read_func(target_height, target_width):
+    """Returning a read function for unprocessed images used in a tf.data.Dataset instance."""
 
     def _image_read(filepath, label):
         image_string = tf.read_file(filepath)
@@ -65,6 +68,8 @@ def _get_read_func(target_height, target_width):
 
 
 def _get_read_func_augment(target_height, target_width):
+    """Returning a read function for unprocessed images used in a tf.data.Dataset instance.
+    Images are randomly fipped and rotated (90°)."""
 
     def _image_read_augment(filepath, label):
         image_string = tf.read_file(filepath)
@@ -84,6 +89,7 @@ def _get_read_func_augment(target_height, target_width):
 
 
 def _read_processed(filepath, label):
+    """Read function for reading processed images."""
     image_string = tf.read_file(filepath)
     image_decoded_bw = tf.image.decode_jpeg(image_string, channels=1)
 
@@ -91,6 +97,9 @@ def _read_processed(filepath, label):
 
 
 def _read_processed_augment(filepath, label):
+    """Read function for reading processed images.
+    Images are randomly fipped and rotated (90°)."""
+
     image_string = tf.read_file(filepath)
     image_decoded_bw = tf.image.decode_jpeg(image_string, channels=1)
 
@@ -104,6 +113,7 @@ def _read_processed_augment(filepath, label):
 
 
 def sequential_conv_model(input_shape, n_outputs):
+    """Building a sequential convolutional network for binary classification."""
     model = tf.keras.Sequential()
     lay = tf.keras.layers
 
@@ -156,30 +166,8 @@ def sequential_conv_model(input_shape, n_outputs):
     return model
 
 
-def inception_resnet_v2(lr):
-    """Tried to run inception on a 13' Macbook ... yea."""
-
-    # create the base pre-trained model
-    base_model = tf.keras.applications.InceptionResNetV2(weights='imagenet', include_top=False)
-    lay = tf.keras.layers
-
-    # add a global spatial average pooling layer
-    x = base_model.output
-    x = lay.GlobalAveragePooling2D()(x)
-    x = lay.Dense(300, activation='relu')(x)
-    predictions = lay.Dense(1, activation='sigmoid')(x)
-
-    model = tf.keras.Model(inputs=base_model.input, outputs=predictions)
-
-    for layer in base_model.layers:
-        layer.trainable = False
-
-    model.compile(optimizer=tf.keras.optimizers.Adam(lr), loss='binary_crossentropy')
-
-    return model
-
-
 def plot_history(save_dir, history_dict, save=True):
+    """Plotting losses and accuracy metrics to an pdf file."""
 
     acc_keys = [key for key in history_dict.keys() if 'acc' in key]
     for key in acc_keys:
@@ -322,6 +310,4 @@ if __name__ == '__main__':
     cm = confusion_matrix(labels_test, predictions)
     print(cm)
     np.savetxt(join(model_dir, '{}_confusion_matrix.txt'.format(model_name)), cm)
-
-    # tensorboard --logdir=/Users/Adem/PycharmProjects/Coding-Challenge/trained_models/nailgun_2019-1-20_14-0-1/tensorboard_logs --host localhost --port 8088
 
