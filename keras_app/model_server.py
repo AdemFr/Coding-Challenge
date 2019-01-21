@@ -7,6 +7,7 @@ from skimage.morphology import closing, square
 from skimage.measure import label as sk_label
 from skimage.measure import regionprops
 from skimage.transform import resize
+from skimage.color import rgb2gray
 
 app = flask.Flask(__name__)
 model = None
@@ -58,6 +59,8 @@ def predict():
     if flask.request.method == "GET":
         if flask.request.args.get("image"):
             image = imread(flask.request.args.get("image"))
+            if image.shape[-1] > 1:
+                image = rgb2gray(image)
 
             image = skimage_cropping(image, 200, 200)
             with graph.as_default():
@@ -68,8 +71,10 @@ def predict():
                     prediction = 'good'
                     prediction_proba = 1.0 - prediction_proba  # Invert to get positive prediction probability
 
-                data["prediction"] = {"label": prediction,
-                                       "probability": prediction_proba}
+                data["prediction"] = {
+                    "label": prediction,
+                    "probability": prediction_proba
+                }
 
                 data["success"] = True
 
