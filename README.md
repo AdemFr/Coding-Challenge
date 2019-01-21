@@ -4,7 +4,7 @@
 
 **pipeline.py:**
 
-Einfache Pipeline, die lokale Bilder einliest und nach der Verarbeitung in einem neuem Verzeichnis abspeichert.
+Pipeline, die lokale Bilder einliest und nach der Verarbeitung in einem neuem Verzeichnis abspeichert.
 Es wird "manuel" die Bounding Box um den Nagel ausgeschnitten, um eine höhere Auflösung während des Trainings zu ermöglichen.
 
 **main.py:**
