@@ -8,14 +8,24 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 from contextlib import redirect_stdout
-from skimage.io import imread
-from skimage.filters import threshold_yen
-from skimage.morphology import closing, square
-from skimage.measure import label as sk_label
-from skimage.measure import regionprops
-from skimage.transform import resize
 
 # tf.enable_eager_execution()  # Debugging
+
+
+def get_lr_schedule(initial_lr, decay):
+    def lr_decay(epoch):
+        lrate = initial_lr * 1 / (1 + decay * epoch)
+        return lrate
+    return lr_decay
+
+
+class LRTensorBoard(tf.keras.callbacks.TensorBoard):
+    def __init__(self, log_dir):  # add other arguments to __init__ if you need
+        super().__init__(log_dir=log_dir)
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs.update({'lr': tf.keras.backend.get_value(self.model.optimizer.lr)})
+        super().on_epoch_end(epoch, logs)
 
 
 def get_files_labels(data_directory, list_class_names):
@@ -93,16 +103,26 @@ def _read_processed_augment(filepath, label):
     return image_rot, label
 
 
-def sequential_conv_model(input_shape, n_outputs, lr, decay):
+def sequential_conv_model(input_shape, n_outputs):
     model = tf.keras.Sequential()
     lay = tf.keras.layers
+
+    model.add(lay.Conv2D(
+        filters=10,
+        kernel_size=3,
+        strides=2,
+        padding='same',
+        input_shape=input_shape,
+    ))
+    model.add(lay.BatchNormalization())
+    model.add(lay.ReLU())
+    model.add(lay.MaxPool2D(pool_size=(2, 2)))
 
     model.add(lay.Conv2D(
         filters=20,
         kernel_size=3,
         strides=2,
         padding='same',
-        input_shape=input_shape,
     ))
     model.add(lay.BatchNormalization())
     model.add(lay.ReLU())
@@ -118,27 +138,17 @@ def sequential_conv_model(input_shape, n_outputs, lr, decay):
     model.add(lay.ReLU())
     model.add(lay.MaxPool2D(pool_size=(2, 2)))
 
-    model.add(lay.Conv2D(
-        filters=50,
-        kernel_size=3,
-        strides=2,
-        padding='same',
-    ))
-    model.add(lay.BatchNormalization())
-    model.add(lay.ReLU())
-    model.add(lay.MaxPool2D(pool_size=(2, 2)))
-
     model.add(lay.Flatten())
     model.add(lay.Dropout(0.10))
 
-    model.add(lay.Dense(units=100))
+    model.add(lay.Dense(units=200))
     model.add(lay.BatchNormalization())
     model.add(lay.ReLU())
 
     model.add(lay.Dense(units=n_outputs, activation='sigmoid'))
 
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(lr=lr,decay=decay),
+        optimizer=tf.keras.optimizers.Adam(),
         loss=tf.keras.losses.binary_crossentropy,
         metrics=['accuracy']
     )
@@ -206,11 +216,11 @@ if __name__ == '__main__':
     # Training variables
     # BATCH_SIZE = 64
     EPOCHS = 200
-    LEARNING_RATE = 0.02
+    LEARNING_RATE = 0.025
     DECAY = 0.1
     IMG_HEIGHT = 200
     IMG_WIDTH = 200
-    TEST_SIZE = 0.10
+    TEST_SIZE = 0.20
     VAL_SIZE = 0.20
 
     # Reading in all file paths and labels and converting to numpy arrays
@@ -230,22 +240,22 @@ if __name__ == '__main__':
         random_state=42
     )
 
-    # Further split data for validation
-    files_train, files_val, labels_train, labels_val = train_test_split(
-        files_train,
-        labels_train,
-        test_size=VAL_SIZE,
-        shuffle=True,
-        stratify=labels_train,
-        random_state=12
-    )
+    # # Further split data for validation
+    # files_train, files_val, labels_train, labels_val = train_test_split(
+    #     files_train,
+    #     labels_train,
+    #     test_size=VAL_SIZE,
+    #     shuffle=True,
+    #     stratify=labels_train,
+    #     random_state=12
+    # )
 
     # Create datasets with batch iteration and infinite looping (epochs specified in model.fit method).
     train_data = tf.data.Dataset.from_tensor_slices((files_train, labels_train))
     train_data = train_data.map(_read_processed_augment).batch(len(files_train)).repeat()
 
-    val_data = tf.data.Dataset.from_tensor_slices((files_val, labels_val))
-    val_data = val_data.map(_read_processed).batch(len(files_val)).repeat()
+    # val_data = tf.data.Dataset.from_tensor_slices((files_val, labels_val))
+    # val_data = val_data.map(_read_processed).batch(len(files_val)).repeat()
 
     test_data = tf.data.Dataset.from_tensor_slices((files_test, labels_test))
     test_data = test_data.map(_read_processed).batch(len(files_test)).repeat()
@@ -260,9 +270,7 @@ if __name__ == '__main__':
 
     model = sequential_conv_model(
         input_shape=(IMG_HEIGHT, IMG_WIDTH, 1),
-        n_outputs=1,
-        lr=LEARNING_RATE,
-        decay=DECAY
+        n_outputs=1
     )
 
     model.summary()
@@ -285,7 +293,8 @@ if __name__ == '__main__':
         tf.keras.callbacks.CSVLogger(join(model_dir, '{}_log.csv'.format(model_name))),
         # tf.keras.callbacks.ReduceLROnPlateau(patience=10, factor=0.5, verbose=1),
         # tf.keras.callbacks.EarlyStopping(patience=25, verbose=1),
-        tf.keras.callbacks.TensorBoard(join(model_dir, 'tensorboard_logs')),
+        tf.keras.callbacks.LearningRateScheduler(schedule=get_lr_schedule(LEARNING_RATE, DECAY), verbose=1),
+        LRTensorBoard(join(model_dir, 'tensorboard_logs')),
         tf.keras.callbacks.ModelCheckpoint(join(model_dir, 'checkpoint_{epoch:02d}.h5'), save_best_only=True)
     ]
 
@@ -293,7 +302,7 @@ if __name__ == '__main__':
         train_data,
         epochs=EPOCHS,
         steps_per_epoch=1,
-        validation_data=val_data,
+        validation_data=test_data,
         validation_steps=1,
         callbacks=callbacks
     )
@@ -304,13 +313,13 @@ if __name__ == '__main__':
     # model.save(join(model_dir, '{}_model.h5'.format(model_name)))
 
     # Generate and save predictions
-    predictions_proba = model.predict(val_data, steps=1)
+    predictions_proba = model.predict(test_data, steps=1)
     predictions = (predictions_proba > 0.5).astype(np.float)
     np.savetxt(join(model_dir, '{}_predictions_proba.txt'.format(model_name)), predictions_proba)
     np.savetxt(join(model_dir, '{}_predictions.txt'.format(model_name)), predictions)
 
     # Calculate confusion matrix
-    cm = confusion_matrix(labels_val, predictions)
+    cm = confusion_matrix(labels_test, predictions)
     print(cm)
     np.savetxt(join(model_dir, '{}_confusion_matrix.txt'.format(model_name)), cm)
 

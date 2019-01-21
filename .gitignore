@@ -1,3 +1,4 @@
 *.idea
 nailgun/
+nailgun_processed*/
 trained_models/

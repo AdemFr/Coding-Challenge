@@ -34,18 +34,24 @@ def get_files_labels(data_directory, list_class_names):
 
 
 def skimage_cropping(filepath, target_height, target_width):
+    # First crop
     img = imread(filepath)
     image_crop = img[160:160 + 880, 580:580 + 820]
+
+    # Masking/closing pixel regions and labeling pixels
     thresh = threshold_yen(image_crop)
     img_closing = closing(image_crop > thresh, square(3))
     img_label = sk_label(img_closing)
 
+    # Search for biggest area and extract centroid
     max_area = 0
     for region in regionprops(img_label):
         if region.area > max_area:
             max_area = region.area
             biggest = region
     center = biggest.centroid
+
+    # Draw square bounding box around centroid
     square_side = 300
     step = square_side / 2
     min_row, max_row, min_col, max_col = max([0, int(center[0]-step)]),\
@@ -53,6 +59,7 @@ def skimage_cropping(filepath, target_height, target_width):
                                          max([0, int(center[1]-step)]),\
                                          int(center[1]+step)
 
+    # Crop and resize image to square bounding box
     image_square = image_crop[min_row:max_row, min_col:max_col]
     image_resize = resize(image_square, [target_height, target_width], preserve_range=True).astype(np.uint8)
 
