@@ -1,14 +1,12 @@
 import tensorflow as tf
 import numpy as np
 import flask
-import io
 from skimage.io import imread
 from skimage.filters import threshold_yen
 from skimage.morphology import closing, square
 from skimage.measure import label as sk_label
 from skimage.measure import regionprops
 from skimage.transform import resize
-from PIL import Image
 
 app = flask.Flask(__name__)
 model = None
@@ -16,7 +14,7 @@ model = None
 
 def load_model(model_path):
     global model
-    model = tf.keras.models.load_model(model_path)
+    model = tf.contrib.saved_model.load_keras_model(model_path)
     global graph
     graph = tf.get_default_graph()
 
@@ -53,15 +51,13 @@ def skimage_cropping(img, target_height, target_width):
     return image_resize.reshape((1, 200, 200, 1))
 
 
-@app.route("/predict", methods=["POST"])
+@app.route("/predict", methods=["GET"])
 def predict():
     data = {"success": False}
 
-    if flask.request.method == "POST":
-        if flask.request.files.get("image"):
-            image = flask.request.files["image"].read()
-            image = imread(io.BytesIO(image))
-            # image = Image.open(io.BytesIO(image))
+    if flask.request.method == "GET":
+        if flask.request.args.get("image"):
+            image = imread(flask.request.args.get("image"))
 
             image = skimage_cropping(image, 200, 200)
             with graph.as_default():
@@ -72,7 +68,7 @@ def predict():
                     prediction = 'good'
                     prediction_proba = 1.0 - prediction_proba  # Invert to get positive prediction probability
 
-                data["predictions"] = {"label": prediction,
+                data["prediction"] = {"label": prediction,
                                        "probability": prediction_proba}
 
                 data["success"] = True
@@ -82,7 +78,7 @@ def predict():
 
 if __name__ == '__main__':
     print("--> Loading Keras Model and starting server")
-    load_model('keras_model.h5')
+    load_model('tf_model')
     app.run()
 
 
