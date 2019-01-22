@@ -84,6 +84,6 @@ def predict():
 if __name__ == '__main__':
     print("--> Loading Keras Model and starting server")
     load_model('tf_model')
-    app.run()
+    app.run(host='0.0.0.0')
 
 
